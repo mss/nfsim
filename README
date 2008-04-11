@@ -1,0 +1,79 @@
+
+nfsim - netfilter simulation environment
+
+http://ozlabs.org/~jk/projects/nfsim/
+
+The netfilter simulator provides a means to run netfilter code in userspace;
+this allows significantly easier debugging and testing of what would otherwise
+be kernel-bound code.
+
+nfsim is released under the GNU General Public License. See the file COPYING
+for details.
+
+
+Quick start:
+
+# import netfilter code from the currently running kernel
+./configure --kerneldir=<kernel directory>
+
+# build
+make
+
+# run
+./simulator
+
+
+Notes on testing:
+
+* Compilation will require the docbook xsl stylesheets and dtds to generate
+  inline help. These are provided by the following packages:
+  
+  	Debian: docbook-xsl docbook-xml xsltproc
+  	Redhat: docbook-style-xsl docbook-dtds
+	
+  During the 'configure' stage, symlinks are created to the directories
+  containing docbook data:
+
+  	Debian:
+	doc/link-xhtml -> /usr/share/sgml/docbook/stylesheet/xsl/nwalsh
+	doc/link-dtd -> /usr/share/sgml/docbook/dtd/xml/4.2
+
+	Redhat:
+	doc/link-xhtml -> /usr/share/sgml/docbook/xsl-stylesheets
+	doc/link-dtd -> /usr/share/sgml/docbook/xml-dtd-4.2-1.0-17
+
+  If compilation fails on one of the -help files, you may have to manually
+  create the links (doc/link-xhtml and doc/link-dtd) to the appropriate
+  locations:
+
+  * the 'link-xhtml' symlink needs to contain xhtml/docbook.xsl 
+  * the 'link-dtd' symlink needs to contain docbookx.dtd
+
+* Simulator development was based on the 2.6 kernel code, so hasn't been tested
+  as thoroughly with 2.4 source, but should still work fine. I'd suggest
+  developing under 2.6 and then backporting to 2.4.
+
+* If custom netfilter modules are under test, they may rely on kernel features
+  that are not yet implemented in the simulator. If this is the case, send
+  an email with a link to the addon module(s) and a description of the
+  problem.
+
+* the .config used for a build is sourced from the .config.sample in the top
+  build directory. If your custom netfilter module needs any .config directives,
+  add them to the .config after the 'make import'
+
+
+HOWTO:
+
+More information in the netfilter simlulator HOWTO:
+
+  http://ozlabs.org/~jk/projects/nfsim/howto/
+
+Or 'make docs', and view doc/simulator.html
+
+
+Authors:
+
+Jeremy Kerr   <jk@ozlabs.org>
+Rusty Russell <rusty@rustcorp.com.au>
+

@@ -1,0 +1,14 @@
+
+TODO
+ * implement --linear-skb mode for older (buggy) kernels.
+ * implement rtable/dst routing, needed for:
+ 	path MTU (currently is fixed at 1500)
+	ipt_MASQUERADE
+ * ifconfig support for multiple addresses on interfaces
+ * allow newlines in XML help CDATA sections
+
+way off:
+ * protocols should be more modular - probably some registration function for
+   a (protocol_id, handler, local_handler) tuple.
+ * allow symbol table lookups (libbfd) to resolve function names, for things
+   like timer_list->function debugging.

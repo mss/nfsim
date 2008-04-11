@@ -1,0 +1,63 @@
+
+# packet from local interface, to ext
+expect gen_ip rcv_local
+expect gen_ip send:eth0 {IPv4 192.168.0.1 192.168.0.2 50 17 1 2}
+gen_ip 192.168.0.1 192.168.0.2 50 udp 1 2
+
+# packet to local interface
+expect gen_ip rcv:eth0
+expect gen_ip send:LOCAL {IPv4 192.168.0.2 192.168.0.1 50 17 3 4}
+gen_ip IF=eth0 192.168.0.2 192.168.0.1 50 udp 3 4
+
+# forwarded packet
+expect gen_ip rcv:eth0
+expect gen_ip send:eth1 {IPv4 192.168.0.2 192.168.1.2 50 17 5 6}
+gen_ip IF=eth0 192.168.0.2 192.168.1.2 50 udp 5 6
+
+# clear any connections
+time +12000
+expect ! proc udp
+proc cat /proc/net/ip_conntrack
+
+# packet to local interface, new connection
+gen_ip IF=eth0 192.168.0.2 192.168.0.1 50 udp 1 2
+
+expect proc udp      17 30 src=192.168.0.2 dst=192.168.0.1 sport=1 dport=2 \[UNREPLIED\] src=192.168.0.1 dst=192.168.0.2 sport=2 dport=1 use=1 
+proc cat /proc/net/ip_conntrack
+
+#reply to previous connection
+gen_ip 192.168.0.1 192.168.0.2 50 udp 2 1
+expect ! proc UNREPLIED
+proc cat /proc/net/ip_conntrack
+
+# packet to local interface, should be a new connection 
+gen_ip IF=eth0 192.168.0.2 192.168.0.1 50 udp 1 2
+
+# should also be a new connection
+time +12000
+gen_ip IF=eth0 192.168.0.2 192.168.0.1 50 udp 1 2
+
+# forwarded udp packet
+gen_ip IF=eth0 192.168.0.2 192.168.1.2 50 udp 5 6
+
+# reply
+gen_ip IF=eth1 192.168.1.2 192.168.0.2 50 udp 6 5
+
+
+# establish forwarded tcp session
+gen_ip IF=eth1 192.168.1.2 192.168.0.2 50 tcp 1025 80 SYN
+gen_ip IF=eth0 192.168.0.2 192.168.1.2 50 tcp 80 1025 SYN/ACK
+gen_ip IF=eth1 192.168.1.2 192.168.0.2 50 tcp 1025 80 ACK
+
+# exchange data
+gen_ip IF=eth1 192.168.1.2 192.168.0.2 50 tcp 1025 80 NONE
+gen_ip IF=eth0 192.168.0.2 192.168.1.2 50 tcp 80 1025 ACK
+
+# other direction
+gen_ip IF=eth0 192.168.0.2 192.168.1.2 50 tcp 80 1025 NONE
+gen_ip IF=eth1 192.168.1.2 192.168.0.2 50 tcp 1025 80 ACK
+
+# close
+gen_ip IF=eth1 192.168.1.2 192.168.0.2 50 tcp 1025 80 FIN
+gen_ip IF=eth0 192.168.0.2 192.168.1.2 50 tcp 80 1025 FIN/ACK
+gen_ip IF=eth1 192.168.1.2 192.168.0.2 50 tcp 1025 80 ACK

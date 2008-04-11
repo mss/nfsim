@@ -1,0 +1,155 @@
+TYPE=%TYPE%
+CC=%CC%
+GCOV=%GCOV%
+GCOVFLAGS=%GCOVFLAGS%
+BINDIR=%BINDIR%
+LIBDIR=%LIBDIR%
+BASEDIR=%BASEDIR%
+
+CFLAGS   = -Wmissing-prototypes -Wstrict-prototypes -Wunused -Wall -ggdb -Wa,-W
+CPPFLAGS = -I. -I$(shell pwd)/core -I$(shell pwd)/kernelenv/include \
+	   -I$(shell pwd)/netfilter/include
+
+#MAKEFLAGS += --no-print-directory
+
+
+#CPPFLAGS+=-nostdinc
+
+
+SUBDIRS=netfilter
+
+export
+
+OBJS:=core/generated_usage.o
+
+# OBJS which need help functions extracted
+HELP_OBJS:=
+
+# files which we can extract command line usage from
+USAGE_SOURCES := core/core.c core/failtest.c kernelenv/proc_stuff.c kernelenv/kernelenv.c
+
+all:	simulator core/fakesockopt.so.1.0
+
+include kernelenv/Makefile
+include core/Makefile
+include tools/Makefile
+include Makefile.import
+
+# link order is important here - the core object and $(TYPE) must be linked
+# before the netfilter object to allow correct ordering of init functions.
+
+# link the netfilter object last
+OBJS += netfilter/netfilter.o
+
+simulator: import kernelenv/include/linux/config.h $(HELP_OBJS) $(OBJS) $(USAGE)
+	$(CC) $(GCOVFLAGS) $(CFLAGS) $(LDFLAGS) -rdynamic -o $@ \
+		-ldl -lreadline -lcurses $(HELP_OBJS) $(OBJS) $(USAGE)
+
+kernelenv/include/linux/config.h: .config
+	sed -ne 's/^\([A-Z0-9_]*\)=\(.*\)$$/#define \1 \2/p' < $< > $@
+
+netfilter/netfilter.o: netfilter/ kernelenv/include/linux/config.h
+	cd $(@D) && $(MAKE)
+
+tools/config.o: tools/config.c tools/generated_config_string.c
+
+tools/generated_config_string.c: .config
+	echo "static const char config_string[] =" > $@
+	grep '^CONFIG' $^ | tr -d '"' | sed 's/\(.*\)/"\1\\n"/' >> $@
+	echo ";" >> $@
+
+core/fakesockopt.so.1.0: core/fakesockopt.o core/utils.o
+	$(CC) $(CFLAGS) -shared -Wl,-soname,fakesockopt.so.1 -nostdlib -ldl \
+		-o $@ $^
+	ln -sf core/fakesockopt.so.1.0 ./
+
+core/fakesockopt.o:
+	$(CC) $(CFLAGS) -c -fPIC core/fakesockopt.c -o core/fakesockopt.o
+
+core/utils.o:
+	$(CC) $(CFLAGS) -c -fPIC core/utils.c -o core/utils.o
+
+core/generated_usage.o: core/generated_usage.c
+core/generated_usage.c: $(USAGE_SOURCES) doc/gen-usage
+	doc/gen-usage $(USAGE_SOURCES) >$@
+
+docs:
+	@[ -L doc/link-dtd ] || \
+		(echo "No docbook installation: see README"; exit 1)
+	cd doc && $(MAKE) $@
+
+gcov:
+	set -e; for f in `find netfilter/$(TYPE) -name '*.c'`; do	\
+		OBJFILE=$$(echo $$f | sed 's/.c$$/.o/');		\
+		if [ -f $$OBJFILE ]; then				\
+			(cd `dirname $$f` && $(GCOV) `basename $$f`);	\
+		fi;							\
+	done
+
+gcov-clean:
+	find . \( -name '*.da' -o -name '*.gcov' \) -exec rm \{\} \;
+
+importclean:
+	rm -rf netfilter/$(TYPE)
+	rm -rf netfilter/core/* netfilter/include/linux/*
+	rm -f Makefile.import
+
+.PHONY:	clean
+clean: gcov-clean
+	cd doc && $(MAKE) $@
+	find . \( -name '*.o' -o -name '*.so' -o -name '*.bb' -o -name '*.bbg' \) -exec rm \{\} \;
+	rm -f kernelenv/include/linux/config.h
+	rm -f simulator core/fakesockopt.so.1.0 fakesockopt.so.1.0
+
+.PHONY:	distclean
+distclean: clean importclean
+	cd doc && $(MAKE) $@
+	rm -f .config core/config.h
+	rm -f tags
+	rm -f nfsim-*.tar.gz
+	rm -f Makefile
+	find . -type l -exec rm {} \;
+	find . -name 'generated_*' -exec rm {} \;
+
+.PHONY:	tags
+tags:
+	find ./ -name '*.[ch]' -print | xargs ctags --links=no
+
+.PHONY:	TAGS
+TAGS:
+	find ./ -name '*.[ch]' -print | xargs etags
+
+check: simulator
+	set -e; for f in testsuite/*.sim; do echo $$f; ./simulator -q -e $$f; done
+
+# 'restorelinks' required for cvs checkout
+.PHONY: savelinks restorelinks
+savelinks:
+	(cd kernelenv/include && find . -lname '*/kernelenv.h') > .links
+
+restorelinks:
+	(cd kernelenv/include && \
+		while read i; do ln -sf ../kernelenv.h $$i; done) < .links
+
+
+$(HELP_OBJS): %.o:%.c
+	doc/gen-help $<
+	$(COMPILE.c) -o $@ $<; ret=$$?; rm -f `basename $< .c`-help*; exit $$ret
+
+.PHONY: snapshot
+snapshot: clean distclean
+	(cd ../ && tar --exclude .svn --exclude nfsim/nfsim-*.tar.gz \
+	        --exclude '.*.sw[op]' \
+		-czvf nfsim/nfsim-$(shell date +%Y%m%d).tar.gz nfsim)
+
+install: simulator
+	@[ -d %BASEDIR%%BINDIR% ] || mkdir -p %BASEDIR%%BINDIR%
+	cp simulator %BASEDIR%%BINDIR%nfsim
+	@[ -d %BASEDIR%%LIBDIR% ] || mkdir -p %BASEDIR%%LIBDIR%
+	cp fakesockopt.so.1.0 %BASEDIR%%LIBDIR%
+	@[ -d %BASEDIR%%LIBDIR%/nfsim ] || mkdir -p %BASEDIR%%LIBDIR%/nfsim
+	cp netfilter/{gen,ipv4}/*.so %BASEDIR%%LIBDIR%/nfsim/
+
+# 2.4 Makefiles want this
+TOPDIR=$(shell pwd)
+

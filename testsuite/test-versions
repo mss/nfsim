@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -e
+
+SIMULATOR=./simulator
+TESTS=00simulator/00simulator
+
+make clean
+make distclean
+
+for k in $@;
+do
+	make "KERNELDIR=$k" import
+	make
+	for t in $TESTS;
+	do
+		./simulator < "testsuite/$t"
+	done
+	make clean
+	make distclean
+done
+

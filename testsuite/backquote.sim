@@ -1,0 +1,20 @@
+expect echo foo
+echo foo
+
+expect echo bar
+echo `echo -n bar`
+
+expect echo foo bar
+echo foo `echo -n bar`
+
+expect echo foobar
+echo foo`echo -n bar`
+
+expect echo barfoo
+echo `echo -n bar`foo
+
+expect echo farboo
+echo `echo -n far``echo -n boo`
+
+expect echo far0boo
+echo `echo -n far`0`echo -n boo`

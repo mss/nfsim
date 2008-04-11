@@ -1,0 +1,216 @@
+<?xml version="1.0"?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD Docbook XML V4.1.2//EN"
+"link-dtd/docbookx.dtd">
+
+<article>
+
+ <articleinfo>
+  <title>Netfilter Simulation Environment</title>
+  <author>
+   <firstname>Jeremy</firstname>
+   <surname>Kerr</surname>
+   <email>jk (at) ozlabs (dot) org</email>
+  </author>
+  <author>
+   <firstname>Rusty</firstname>
+   <surname>Russell</surname>
+   <email>rusty (at) rustcorp (dot) com (dot) au</email>
+  </author>
+  <pubdate>$LastChangedDate: 2005-11-03 04:49:05 +1100 (Thu, 03 Nov 2005) $, released under GPL.</pubdate>
+  <copyright>
+   <year>2003</year>
+   <year>2004</year>
+   <holder>Jeremy Kerr</holder>
+   <holder>Rusty Russell</holder>
+  </copyright>
+ <abstract>
+  <para>This document provides an overview of the Netfilter Simulator system, used
+   for testing kernel netfilter code.
+  </para>
+ </abstract>
+ </articleinfo>
+ 
+ 
+ <section id="framework">
+  <title>Simulator Framework</title>
+  <para>The netfilter simulator provides an environment to run kernel netfilter
+   code, by providing a kernel-like 'environment'. The simulator consists of:
+  </para>
+  <variablelist>
+
+   <varlistentry>
+    <term>Kernel Environment Code</term>
+    <listitem><para>Provide generic kernel structures and functions, such as
+    spinlocks. This code is in the <filename>kernelenv/</filename>
+    directory.</para></listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>Simulator core</term>
+    <listitem><para>Provides the protocol independent netfilter structures and
+     functions, which are used by the protocol module and the netfilter code
+     under test. The core functionality is provided by
+     <filename>core/*.c</filename>.</para></listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>Message-passing interface for userspace tools</term>
+    <listitem><para>Allows userspace programs to talk to the simulated
+     kernel using the <function>{s,g}etsockopt()</function> function. This
+     allows tools such as <command>iptables</command> to be used without
+     modification.</para></listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>A protocol module</term>
+    <listitem><para>Provides all the protocol-specific functions for the current
+     protocol - at present there is only an IPv4 protocol module. This provides
+     the routing code, address formats, etc, and is where the netfilter hooks
+     are called from. The protocol module is in the
+     <filename>core/&lt;protocol&gt;/</filename> directory.</para></listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>The imported netfilter code</term>
+    <listitem><para>The netfilter code under test. This is imported from an external
+    kernel tree into the <filename>netfilter/</filename> directory. Also, the
+    <filename>.config</filename> and <filename>Makefile</filename> files are
+    copied to allow building.</para></listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>User interface tools</term>
+    <listitem><para>These tools add functionality to the user interface. Each tool
+     provides one or more commands, such as <command>ifconfig</command> or
+     <command>route</command>. Tools can be added by adding new files into
+     the <filename>tools/</filename> directory.</para></listitem>
+
+   </varlistentry>
+  </variablelist>
+ </section>
+
+ <section id="building">
+  <title>Building the simulator</title>
+  
+  <section id="configure">
+   <title>Configuring and importing the netfilter code</title>
+   <para>First, the netfilter code needs to be configured - the source directory
+   is specified to <command>./configure</command>, using the 
+   <arg>--kerneldir</arg> flag. By default, it is set to the current
+   kernel's build directory:
+   <filename><![CDATA[/lib/modules/$(uname -r)/build]]></filename>
+  </para>
+  <para>If you are reusing your source tree, it is recommended you do a 
+   <userinput>make distclean</userinput> before running <command>./configure</command>.
+  </para>
+  <note>
+   <para>At present, the imported .config file is not used - instead, the
+    packaged file <filename>.config.sample</filename> is copied to
+    <filename>.config</filename> during the install stage. If you need to add
+    any directives to the .config file, do so after the import</para>
+  </note>
+
+  </section>
+  <section id="compiling">
+   <title>Compiling</title>
+   <para>
+    Next, the simulator can be compiled with <userinput>make</userinput>.
+   </para>
+   <para>Because the simulator is in development, the kernel environment may
+    not yet provide all functionality required to the imported netfilter code. If
+    there are any errors during compilation, email me.
+   </para>
+   <note> 
+    <para>Each build of the simulator is dependent on the netfilter code under
+     test; the binary is not 'installed' as would be the norm with other
+     applications.</para>
+    </note>
+  </section>
+ </section>
+
+ <section id="running">
+  <title>Running the simulator</title>
+  <para>Run the simulator with <userinput>./simulator</userinput>.</para>
+  <para>The simulator will start, initialising the following items (in order):
+   <orderedlist>
+    <listitem><para>simulator core</para></listitem>
+    <listitem><para>external message interface</para></listitem>
+    <listitem><para>user interface</para></listitem>
+    <listitem><para>logging system</para></listitem>
+    <listitem><para>user interface tools</para></listitem>
+    <listitem><para>kernel environment</para></listitem>
+    <listitem><para>protocol module</para></listitem>
+    <listitem><para>netfilter testing code</para></listitem>
+   </orderedlist>
+  </para>
+  <para>During initialisation (or at any other time), calls to
+   <function>printk()</function> will be  shown, as would occur on boot or
+   kernel module loading.</para>
+  <para>By default, the simulator is started with the three interfaces (eth0,
+  eth1 and lo)
+   
+   interface
+      configuration:</para>
+
+<screen><![CDATA[lo      addr:  127.0.0.1
+        mask:  255.0.0.0
+        bcast: 127.255.255.255
+        RX packets: 0 bytes: 0
+        TX packets: 0 bytes: 0
+
+eth0    addr:  192.168.0.1
+        mask:  255.255.255.0
+        bcast: 192.168.0.255
+        RX packets: 0 bytes: 0
+        TX packets: 0 bytes: 0
+
+eth1    addr:  192.168.1.1
+        mask:  255.255.255.0
+        bcast: 192.168.1.255
+        RX packets: 0 bytes: 0
+        TX packets: 0 bytes: 0
+]]></screen>
+    <para>In short - two ethernet interfaces on different networks, and a
+      loopback interface.</para>
+    <para>Routing tables are initialised also, with the appropriate network
+    available from each device:</para>
+<screen><![CDATA[        network    iface     
+      127.0.0.0/8  lo        
+    192.168.0.0/24 eth0      
+    192.168.1.0/24 eth1
+]]></screen>
+   <section id="arguments">
+    <title>Command-line arguments</title>
+    <!-- AUTOGENERATED USAGE GOES HERE -->
+   </section>
+
+   <section id="commands">
+    <title>Commands</title>
+    <para>Inline help is available on most commands, and is reproduced here.</para>
+    <!-- AUTOGENERATED HELP GOES HERE -->
+      
+   </section>
+
+ </section>
+ <!--
+ No external utilities at the moment, we'v changed to a socketpair()
+ system
+ <section id="extutil">
+  <title>External userspace utilities</title>
+  <para>The netfilter simulation environment allows external userspace utilities
+   to interact with the simulator. For example, the standard iptables executable
+   can be used to modify the simulator's own iptables data.
+  </para>
+  <para>To allow external programs to interface to the simulator, the
+   "fakesockopt" shared library is loaded, which overrides (amongst other things)
+   the get/setsockopt syscalls. Typically, it can be loaded with the LD_PRELOAD
+   environment variable. While the simulator is running:
+   <screen>
+LD_PRELOAD=./fakesockopt.so.1.0 /sbin/iptables -L -v
+</screen>
+  </para>
+
+ </section>
+ -->
+</article>
+ 

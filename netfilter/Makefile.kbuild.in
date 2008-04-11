@@ -1,0 +1,30 @@
+
+include $(TOPDIR)/.config
+
+include Makefile
+
+.PHONY: modules
+modules: $(obj-m:.o=.so)
+
+# We can end up with nothing (everything is a module): dummy.o fixes this.
+$(TYPE).o: $(obj-y) ../dummy.o
+	$(LD) $(LDFLAGS) -r -o $(@) $^
+
+gen.o: $(obj-y) ../dummy.o
+	$(LD) $(LDFLAGS) -r -o $(@) $^
+
+%.o:%.c
+	$(COMPILE.c) $(GCOVFLAGS) -DKBUILD_MODNAME=\"$(@:.o=)\" $(OUTPUT_OPTION) $<
+
+%.o:	
+	$(MAKE) CFLAGS="$(CFLAGS) $(GCOVFLAGS) -DKBUILD_MODNAME=\"$(@:.o=)\"" $($(@:.o=-objs))
+	$(LD) $(LDFLAGS) -g -r -o $(@) $($(@:.o=-objs))
+
+%.so:%.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) $(GCOVFLAGS) -fPIC -shared -DMODULE -DKBUILD_MODNAME=\"$(@:.so=)\" $(OUTPUT_OPTION)  $<
+
+%.so:
+	$(MAKE) CFLAGS="$(CFLAGS) -fPIC $(GCOVFLAGS) -DMODULE -DKBUILD_MODNAME=\\\"$(@:.so=)\\\"" $($(@:.so=-objs))
+	$(CC) -shared -o $(@) $($(@:.so=-objs)) 
+
+

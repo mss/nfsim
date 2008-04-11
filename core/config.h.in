@@ -1,0 +1,8 @@
+#ifndef __NFSIM_CONFIG_H
+#define __NFSIM_CONFIG_H
+
+#define LIBDIR "%LIBDIR%"
+#define BINDIR "%BINDIR%"
+#define VERSION "%VERSION%"
+
+#endif /* __NFSIM_CONFIG_H */

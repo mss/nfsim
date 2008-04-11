@@ -1,0 +1,199 @@
+#!/bin/sh
+
+set -e
+
+KERNELDIR=/lib/modules/$(uname -r)/build
+TYPE=ipv4
+VERSION=0.2
+GCOV=${GCOV:-gcov}
+CC=${CC:-gcc}
+PREFIX=/usr/local
+
+barf()
+{
+    echo "$@" >&2
+    exit 1
+}
+
+# Create regex to grep out unsupported config options.
+unsupported()
+{
+    grep -v '^#' UNSUPPORTED | tr -s '\n' '|'
+}
+
+for arg; do
+    case "$arg" in
+	--kerneldir=*) KERNELDIR=$(echo "$arg" | cut -d= -f2-);;
+	--gcov) GCOVFLAGS='-fprofile-arcs -ftest-coverage'; LIBGCOV='-lgcov';;
+	--prefix=*) PREFIX=$(echo "$arg" | cut -d= -f2-);;
+	--bindir=*) BINDIR=$(echo "$arg" | cut -d= -f2-)/;;
+	--libdir=*) LIBDIR=$(echo "$arg" | cut -d= -f2-)/;;
+	--basedir=*) BASEDIR=$(echo "$arg" | cut -d= -f2-)/;;
+	--list-sources)
+	    find core kernelenv tools -type l -o -name 'generated_*' -o -wholename core/config.h -o -wholename kernelenv/include/linux/config.h -o -name '*.[ch]' -print
+	    echo netfilter/dummy.c
+	    exit 0
+	    ;;
+	*)
+	    barf "Usage: ./configure [--gcov] [--prefix=<dir>] --kerneldir=<DIR>"
+	    ;;
+    esac
+done
+
+[ -n "$BINDIR" ] || BINDIR="$PREFIX"/bin/
+[ -n "$LIBDIR" ] || LIBDIR="$PREFIX"/lib/
+
+link_bitfield()
+{
+    case `echo -n 'AB' | od -A n -x | tr -d ' '` in
+	4241)
+	    echo You are little endian...
+	    ln -sf kernelenv_littleendian.h kernelenv/include/kernelenv_endian.h
+	    ;;
+	4142)
+	    echo You are big endian...
+	    ln -sf kernelenv_bigendian.h kernelenv/include/kernelenv_endian.h
+	    ;;
+	*)
+	    barf Cannot determine endianness of machine
+	    ;;
+    esac
+}
+
+SUB='s@%GCOVFLAGS%@'$GCOVFLAGS'@;s@%TYPE%@'$TYPE'@;s@%VERSION%@'$VERSION'@;s@%GCOV%@'$GCOV'@;s@%CC%@'$CC'@;s@%LIBDIR%@'$LIBDIR'@;s@%BINDIR%@'$BINDIR'@;s@%BASEDIR%@'$BASEDIR'@;s@%LIBGCOV%@'$LIBGCOV'@'
+
+[ -d $KERNELDIR/net/$TYPE/netfilter ] ||
+	barf No netfilter directory found in $KERNELDIR
+
+echo -n Configuring files: 
+for f in `find . -name '*.in'`; do
+    echo -n " $f"
+    sed "$SUB" < $f > `echo $f | sed 's/.in$//'`
+done; echo
+link_bitfield
+
+echo Setting up rules to import netfilter $TYPE code from $KERNELDIR
+rm -f Makefile.import
+rm -rf netfilter/$TYPE
+
+mkdir -p netfilter/$TYPE
+if [ -f $KERNELDIR/net/core/netfilter.c ]; then
+    # < Linux 2.6.14
+    echo "netfilter/core/netfilter.c: $KERNELDIR/net/core/netfilter.c" >> Makefile.import
+    echo '	@sed -f netfilter.c.sed $< > $@ && chmod a-w $@' >> Makefile.import
+    echo "import: netfilter/core/netfilter.c" >> Makefile.import
+else
+    # >= Linux 2.6.14
+    for i in core.c nf_log.c nf_queue.c nf_sockopt.c nf_internals.h; do
+        echo "netfilter/core/$i: $KERNELDIR/net/netfilter/$i" >> Makefile.import
+        echo '	@sed -f netfilter.c.sed $< > $@ && chmod a-w $@' >> Makefile.import
+        echo "import: netfilter/core/$i" >> Makefile.import
+    done
+    # Import type-specific netfilter.c to netfilter/core/<type>.c
+    for typ in ipv4 ipv6; do
+    	echo "netfilter/core/$typ.c: $KERNELDIR/net/$typ/netfilter.c" >> Makefile.import
+    	echo '	@sed -f netfilter.c.sed $< > $@ && chmod a-w $@' >> Makefile.import
+    	echo "import: netfilter/core/$typ.c" >> Makefile.import
+    done
+    if [ -f $KERNELDIR/net/netfilter/x_tables.c ]; then
+        #echo "netfilter/core/x_tables.c: $KERNELDIR/net/netfilter/x_tables.c" >> Makefile.import
+	#echo '	@cp $< $@ && chmod a-w $@' >> Makefile.import
+	#echo "import: netfilter/core/x_tables.c" >> Makefile.import
+	files=$(cd $KERNELDIR/net/netfilter/; \
+		find . -name '*.[ch]' ! -name '*.mod.c' ! -name 'core.c' ! -name 'nf_log.c' ! -name 'nf_queue.c' ! -name 'nf_sockopt.c' | grep -vE '/(SCCS|RCS)/')
+	for f in $files; do
+	    echo "netfilter/gen/$f":"$KERNELDIR/net/netfilter/$f" >> Makefile.import
+	    echo '	@cp $< $@ && chmod a-w $@' >> Makefile.import
+	    echo "import: netfilter/gen/$f" >> Makefile.import
+	done
+	cat $KERNELDIR/net/netfilter/Makefile | grep -v '^obj-$(CONFIG_NETFILTER)' | grep -v '^netfilter-objs' > netfilter/gen/Makefile
+    fi
+fi
+
+files=$(cd $KERNELDIR/net/$TYPE/netfilter/; \
+	find . -name '*.[ch]' ! -name '*.mod.c' | grep -vE '/(SCCS|RCS)/')
+
+for f in $files; do
+    mkdir -p $(dirname netfilter/$TYPE/$f)
+    echo "netfilter/$TYPE/$f":"$KERNELDIR/net/$TYPE/netfilter/$f" >> Makefile.import
+    echo '	@cp $< $@ && chmod a-w $@' >> Makefile.import
+    echo "import: netfilter/$TYPE/$f" >> Makefile.import
+done
+
+# 2.4-style Makefile?  Trim off explicit rules for multipart modules.
+LINE=`grep -n Rules.make $KERNELDIR/net/$TYPE/netfilter/Makefile | cut -d: -f1`
+if [ -n "$LINE" ]; then
+    head -$LINE $KERNELDIR/net/$TYPE/netfilter/Makefile
+else
+    cat $KERNELDIR/net/$TYPE/netfilter/Makefile
+fi > netfilter/$TYPE/Makefile
+
+files=$(cd $KERNELDIR/include/linux/netfilter_${TYPE}; \
+	find . -name '*.[ch]' | grep -vE '/(SCCS|RCS)/')
+for f in $files; do
+    mkdir -p $(dirname netfilter/include/linux/netfilter_$TYPE/$f)
+    echo "netfilter/include/linux/netfilter_$TYPE/$f":"$KERNELDIR/include/linux/netfilter_$TYPE/$f" >> Makefile.import
+    echo '	@cp $^ $@ && chmod a-w $@' >> Makefile.import
+    echo "import: netfilter/include/linux/netfilter_$TYPE/$f" >> Makefile.import
+done
+if [ -d $KERNELDIR/include/linux/netfilter ]; then
+    # present in Linux 2.6.14+
+    files=$(cd $KERNELDIR/include/linux/netfilter; \
+	find . -name '*.[ch]' | grep -vE '/(SCCS|RCS)/')
+    for f in $files; do
+        mkdir -p $(dirname netfilter/include/linux/netfilter/$f)
+        echo "netfilter/include/linux/netfilter/$f":"$KERNELDIR/include/linux/netfilter/$f" >> Makefile.import
+        echo '	@cp $^ $@ && chmod a-w $@' >> Makefile.import
+        echo "import: netfilter/include/linux/netfilter/$f" >> Makefile.import
+    done
+fi
+if [ -d $KERNELDIR/include/net/netfilter ]; then
+    # present in Linux 2.6.15+
+    files=$(cd $KERNELDIR/include/net/netfilter; \
+	find . -name '*.[ch]' | grep -vE '/(SCCS|RCS)/')
+    for f in $files; do
+        mkdir -p $(dirname netfilter/include/net/netfilter/$f)
+        echo "netfilter/include/net/netfilter/$f":"$KERNELDIR/include/net/netfilter/$f" >> Makefile.import
+        echo '	@cp $^ $@ && chmod a-w $@' >> Makefile.import
+        echo "import: netfilter/include/net/netfilter/$f" >> Makefile.import
+    done
+fi
+
+echo "netfilter/include/linux/netfilter_$TYPE.h":"$KERNELDIR/include/linux/netfilter_$TYPE.h" >> Makefile.import
+echo '	@cp $^ $@ && chmod a-w $@' >> Makefile.import
+echo "import: netfilter/include/linux/netfilter_$TYPE.h" >> Makefile.import
+
+# Grab kernel version stuff from Makefile
+VERSION=$(grep ^VERSION $KERNELDIR/Makefile | cut -d= -f2-)
+PATCHLEVEL=$(grep ^PATCHLEVEL $KERNELDIR/Makefile | cut -d= -f2-)
+SUBLEVEL=$(grep ^SUBLEVEL $KERNELDIR/Makefile | cut -d= -f2-)
+EXTRAVERSION=$(grep ^EXTRAVERSION $KERNELDIR/Makefile | cut -d= -f2-)
+KERNELRELEASE=$(echo $VERSION.$PATCHLEVEL.$SUBLEVEL$EXTRAVERSION | tr -d ' ')
+
+cat > netfilter/include/linux/version.h <<EOF
+#define UTS_RELEASE "$KERNELRELEASE"
+#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))
+#define LINUX_VERSION_CODE KERNEL_VERSION($VERSION, $PATCHLEVEL, $SUBLEVEL)
+EOF
+
+if [ -f $KERNELDIR/.config ]; then
+    echo Using $KERNELDIR config...
+    egrep -v @@`unsupported`@@ $KERNELDIR/.config > .config
+else
+    echo Using sample config...
+    cp .config.sample .config
+fi
+
+if [ x"$MODULES" = xn ]; then
+    echo Building in all modules...
+    mv .config .config.orig
+    sed 's/=m/=y/' < .config.orig > .config
+    rm .config.orig
+fi
+
+# Create symlinks in case they're not already there.
+(cd kernelenv/include && while read i; do ln -sf ../kernelenv.h $i; done) < .links
+
+echo Creating documentation links.
+(cd doc && ./create-links) || true
+echo Done.
